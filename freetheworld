@@ -1,0 +1,85 @@
+// civilogen-server.js
+const express = require('express');
+const bodyParser = require('body-parser');
+const OpenAI = require('openai');
+const { v4: uuidv4 } = require('uuid');
+const openai = new OpenAI();
+
+const app = express();
+app.use(bodyParser.json());
+const PORT = process.env.PORT || 13000;
+
+// In-memory stores
+const signals = [];   // public input
+const policies = [];  // simulated outcomes
+const speeches = [];  // leader text
+
+// 1. Ingest civic signal (anonymized)
+app.post('/signal', (req, res) => {
+  const { region, text } = req.body;
+  const id = uuidv4();
+  signals.push({ id, region, text, ts: Date.now() });
+  res.json({ signalId: id, status: 'received' });
+});
+
+// 2. Map emotion → policy pressure
+app.post('/signal/analyze', async (req, res) => {
+  const { region } = req.body;
+  const recent = signals.filter(s => s.region === region).slice(-50);
+  const prompt = `
+As CIVILOGEN, analyze these civic inputs for emotional themes, policy needs, and urgency.
+Return JSON: { region, dominantEmotions: [...], policyNeeds: [...], urgency: 0-1 }
+Inputs:
+${recent.map(s => s.text).join('\n--\n')}
+  `;
+  const ai = await openai.chat.completions.create({
+    model: 'gpt-4o',
+    messages: [
+      { role: 'system', content: 'You map citizens’ voice to policy insight.' },
+      { role: 'user', content: prompt }
+    ]
+  });
+  const analysis = JSON.parse(ai.choices[0].message.content);
+  res.json(analysis);
+});
+
+// 3. Simulate policy foresight
+app.post('/policy/simulate', async (req, res) => {
+  const { policyText } = req.body;
+  const prompt = `
+You are CIVILOGEN. Forecast short, mid, long term civic, economic, emotional, and social impact of:
+"${policyText}"
+Return JSON: { shortTerm, midTerm, longTerm }
+  `;
+  const ai = await openai.chat.completions.create({
+    model: 'gpt-4o',
+    messages: [
+      { role: 'system', content: 'You simulate civic foresight.' },
+      { role: 'user', content: prompt }
+    ]
+  });
+  const outcome = JSON.parse(ai.choices[0].message.content);
+  policies.push({ id: uuidv4(), policyText, outcome });
+  res.json(outcome);
+});
+
+// 4. Analyze leader speech tone
+app.post('/speech/analyze', async (req, res) => {
+  const { speechText } = req.body;
+  const prompt = `
+Analyze this speech for tone: trust, empathy, bias, clarity.
+Return JSON: { trust:0-1, empathy:0-1, biasScore:-1 to 1, suggestions: [string] }
+  `;
+  const ai = await openai.chat.completions.create({
+    model: 'gpt-4o',
+    messages: [
+      { role: 'system', content: 'You assess leader communication.' },
+      { role: 'user', content: prompt + speechText }
+    ]
+  });
+  const feedback = JSON.parse(ai.choices[0].message.content);
+  speeches.push({ id: uuidv4(), speechText, feedback });
+  res.json(feedback);
+});
+
+app.listen(PORT, () => console.log(`🌍 CIVILOGEN backend running on port ${PORT}`));
